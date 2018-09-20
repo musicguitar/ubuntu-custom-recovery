@@ -133,134 +133,121 @@ func FindPart(Label string) (devNode string, devPath string, partNr int, err err
 	return
 }
 
-func FindTargetParts(parts *Partitions, recoveryType string) error {
+func FindTargetParts(parts *Partitions) error {
 	var devPath string
 	if parts.SourceDevNode == "" || parts.SourceDevPath == "" || parts.Recovery_nr == -1 {
 		return fmt.Errorf("Missing source recovery data")
 	}
 
-	if recoveryType == rplib.HEADLESS_INSTALLER {
-		// If config.yaml has set the specific recovery device,
-		// it would use is as recovery device.
-		// Or it would find out the recovery device
-		if configs.Recovery.RecoveryDevice != "" {
-			parts.TargetDevPath = configs.Recovery.RecoveryDevice
-			parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
-		} else {
-			// target disk might raid devices (/dev/md126)
-			if _, err := os.Stat("/sys/block/md126/dev"); err == nil {
-				log.Println("found raid devices enabled in BIOS")
+	// If config.yaml has set the specific recovery device,
+	// it would use is as recovery device.
+	// Or it would find out the recovery device
+	if configs.Recovery.RecoveryDevice != "" {
+		parts.TargetDevPath = configs.Recovery.RecoveryDevice
+		parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
+	} else {
+		// target disk might raid devices (/dev/md126)
+		if _, err := os.Stat("/sys/block/md126/dev"); err == nil {
+			log.Println("found raid devices enabled in BIOS")
+			dat := []byte("")
+			dat, err := ioutil.ReadFile("/sys/block/md126/dev")
+			if err != nil {
+				return err
+			}
+			dat_str := strings.TrimSpace(string(dat))
+			blockDevice := rplib.Realpath(fmt.Sprintf("/dev/block/%s", dat_str))
+			if blockDevice != parts.SourceDevPath {
+				parts.TargetDevPath = blockDevice
+				parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
+				return nil
+			}
+		}
+
+		// target disk might be emmc
+		if devPath == "" {
+			blockArray, _ := filepath.Glob("/sys/block/mmcblk*")
+			for _, block := range blockArray {
 				dat := []byte("")
-				dat, err := ioutil.ReadFile("/sys/block/md126/dev")
+				dat, err := ioutil.ReadFile(filepath.Join(block, "dev"))
 				if err != nil {
 					return err
 				}
 				dat_str := strings.TrimSpace(string(dat))
 				blockDevice := rplib.Realpath(fmt.Sprintf("/dev/block/%s", dat_str))
 				if blockDevice != parts.SourceDevPath {
-					parts.TargetDevPath = blockDevice
-					parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
-					return nil
-				}
-			}
-
-			// target disk might be emmc
-			if devPath == "" {
-				blockArray, _ := filepath.Glob("/sys/block/mmcblk*")
-				for _, block := range blockArray {
-					dat := []byte("")
-					dat, err := ioutil.ReadFile(filepath.Join(block, "dev"))
-					if err != nil {
-						return err
-					}
-					dat_str := strings.TrimSpace(string(dat))
-					blockDevice := rplib.Realpath(fmt.Sprintf("/dev/block/%s", dat_str))
-					if blockDevice != parts.SourceDevPath {
-						devPath = blockDevice
-						if devPath == "/dev/mmcblk0" {
-							parts.TargetDevPath = devPath
-							parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
-							return nil
-						}
-						break
-					}
-				}
-			}
-
-			// target disk might be scsi disk
-			if devPath == "" {
-				blockArray, _ := filepath.Glob("/sys/block/sd*")
-				for _, block := range blockArray {
-					dat := []byte("")
-					dat, err := ioutil.ReadFile(filepath.Join(block, "dev"))
-					if err != nil {
-						return err
-					}
-					dat_str := strings.TrimSpace(string(dat))
-					blockDevice := rplib.Realpath(fmt.Sprintf("/dev/block/%s", dat_str))
-
-					if blockDevice != parts.SourceDevPath {
-						devPath = blockDevice
-						break
-					}
-				}
-			}
-
-			// target disk might be nvme disk
-			if devPath == "" {
-				blockArray, _ := filepath.Glob("/sys/block/nvme*")
-				for _, block := range blockArray {
-					dat := []byte("")
-					dat, err := ioutil.ReadFile(filepath.Join(block, "dev"))
-					if err != nil {
-						return err
-					}
-					dat_str := strings.TrimSpace(string(dat))
-					blockDevice := rplib.Realpath(fmt.Sprintf("/dev/block/%s", dat_str))
-
-					if blockDevice != parts.SourceDevPath {
-						devPath = blockDevice
-						break
-					}
-				}
-			}
-
-			if devPath != "" {
-				// The devPath is with partiion for /dev/sdX1 or /dev/mmcblkXp1
-				// but without partition for /dev/nvmeXnX
-				// Here to remove the partition information
-				for {
-					if true == strings.Contains(devPath, "nvme") {
+					devPath = blockDevice
+					if devPath == "/dev/mmcblk0" {
 						parts.TargetDevPath = devPath
 						parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
-						break
+						return nil
 					}
-					if _, err := strconv.Atoi(string(devPath[len(devPath)-1])); err == nil {
-						devPath = devPath[:len(devPath)-1]
-					} else {
-						if devPath[len(devPath)-1] == 'p' {
-							devPath = devPath[:len(devPath)-1]
-						}
-						parts.TargetDevPath = devPath
-						parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
-						break
-					}
+					break
 				}
-				log.Println("debug: ", parts.TargetDevPath, parts.TargetDevNode)
-			} else {
-				return fmt.Errorf("No target disk found")
 			}
 		}
-	} else {
-		// If config.yaml has set the specific system device,
-		// it would use is as system device.
-		// Or it would assume the system device is same as recovery device
-		if configs.Recovery.SystemDevice != "" {
-			parts.TargetDevPath = configs.Recovery.SystemDevice
-			parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
+
+		// target disk might be scsi disk
+		if devPath == "" {
+			blockArray, _ := filepath.Glob("/sys/block/sd*")
+			for _, block := range blockArray {
+				dat := []byte("")
+				dat, err := ioutil.ReadFile(filepath.Join(block, "dev"))
+				if err != nil {
+					return err
+				}
+				dat_str := strings.TrimSpace(string(dat))
+				blockDevice := rplib.Realpath(fmt.Sprintf("/dev/block/%s", dat_str))
+
+				if blockDevice != parts.SourceDevPath {
+					devPath = blockDevice
+					break
+				}
+			}
+		}
+
+		// target disk might be nvme disk
+		if devPath == "" {
+			blockArray, _ := filepath.Glob("/sys/block/nvme*")
+			for _, block := range blockArray {
+				dat := []byte("")
+				dat, err := ioutil.ReadFile(filepath.Join(block, "dev"))
+				if err != nil {
+					return err
+				}
+				dat_str := strings.TrimSpace(string(dat))
+				blockDevice := rplib.Realpath(fmt.Sprintf("/dev/block/%s", dat_str))
+
+				if blockDevice != parts.SourceDevPath {
+					devPath = blockDevice
+					break
+				}
+			}
+		}
+
+		if devPath != "" {
+			// The devPath is with partiion for /dev/sdX1 or /dev/mmcblkXp1
+			// but without partition for /dev/nvmeXnX
+			// Here to remove the partition information
+			for {
+				if true == strings.Contains(devPath, "nvme") {
+					parts.TargetDevPath = devPath
+					parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
+					break
+				}
+				if _, err := strconv.Atoi(string(devPath[len(devPath)-1])); err == nil {
+					devPath = devPath[:len(devPath)-1]
+				} else {
+					if devPath[len(devPath)-1] == 'p' {
+						devPath = devPath[:len(devPath)-1]
+					}
+					parts.TargetDevPath = devPath
+					parts.TargetDevNode = filepath.Base(parts.TargetDevPath)
+					break
+				}
+			}
+			log.Println("debug: ", parts.TargetDevPath, parts.TargetDevNode)
 		} else {
-			parts.TargetDevNode = parts.SourceDevNode
-			parts.TargetDevPath = parts.SourceDevPath
+			return fmt.Errorf("No target disk found")
 		}
 	}
 	return nil
@@ -268,7 +255,7 @@ func FindTargetParts(parts *Partitions, recoveryType string) error {
 
 var parts Partitions
 
-func GetPartitions(recoveryLabel string, recoveryType string) (*Partitions, error) {
+func GetPartitions(recoveryLabel string) (*Partitions, error) {
 	var err error
 	const OLD_PARTITION = "/tmp/old-partition.txt"
 	parts = Partitions{"", "", "", "", -1, -1, -1, -1, -1, 0, 20479, -1, -1, -1, -1, -1, -1, -1}
@@ -280,7 +267,7 @@ func GetPartitions(recoveryLabel string, recoveryType string) (*Partitions, erro
 		return nil, err
 	}
 
-	err = FindTargetParts(&parts, recoveryType)
+	err = FindTargetParts(&parts)
 	if err != nil {
 		err = errors.New(fmt.Sprintf("Target install partition not found"))
 		parts = Partitions{"", "", "", "", -1, -1, -1, -1, -1, 0, 20479, -1, -1, -1, -1, -1, -1, -1}
@@ -290,7 +277,7 @@ func GetPartitions(recoveryLabel string, recoveryType string) (*Partitions, erro
 	//system-boot partition info
 	devnode, _, sysboot_nr, err := FindPart(SysbootLabel)
 	if err == nil {
-		if (recoveryType != rplib.HEADLESS_INSTALLER) || (recoveryType == rplib.HEADLESS_INSTALLER && parts.SourceDevNode != devnode) {
+		if parts.SourceDevNode != devnode {
 			//Target system-boot found and must not source device in headless_installer mode
 			parts.Sysboot_nr = sysboot_nr
 		}
@@ -365,36 +352,6 @@ func GetPartitions(recoveryLabel string, recoveryType string) (*Partitions, erro
 	return &parts, nil
 }
 
-func SetPartitionStartEnd(parts *Partitions, partName string, partSizeMB int, bootloader string) error {
-	if parts == nil {
-		return fmt.Errorf("nil Partitions")
-	}
-
-	switch partName {
-	case "system-boot":
-		if bootloader == "u-boot" {
-			// Not allow to edit system-boot in u-boot yet.
-		} else if bootloader == "grub" {
-			parts.Sysboot_start = parts.Recovery_end + 1
-			parts.Sysboot_end = parts.Sysboot_start + int64(partSizeMB*1024*1024)
-		}
-		//TODO: To support swap partition
-	case "swap":
-		if bootloader == "u-boot" {
-			// Not allow to edit swap in u-boot yet.
-		} else if bootloader == "grub" {
-			parts.Swap_start = parts.Sysboot_end + 1
-			parts.Swap_end = parts.Swap_start + int64(partSizeMB*1024*1024)
-		}
-		// The writable partition would be enlarged to maximum.
-		// Here does not support change the Start, End
-	default:
-		return fmt.Errorf("Unknown Partition Name %s", partName)
-	}
-
-	return nil
-}
-
 func CopyRecoveryPart(parts *Partitions) error {
 	if parts.SourceDevPath == parts.TargetDevPath {
 		return fmt.Errorf("The source device and target device are same")
@@ -440,159 +397,6 @@ func CopyRecoveryPart(parts *Partitions) error {
 	} else if _, err = os.Stat(SYSBOOT_MNT_DIR + "efi"); err == nil {
 		cmd := exec.Command("grub-editenv", filepath.Join(RECO_TAR_MNT_DIR, "efi/ubuntu/grubenv"), "set", "recovery_type=factory_install")
 		cmd.Run()
-	}
-
-	return nil
-}
-
-func RestoreParts(parts *Partitions, bootloader string, partType string, recoveryos string) error {
-	var dev_path string = strings.Replace(parts.TargetDevPath, "mapper/", "", -1)
-	part_nr := parts.Last_part_nr
-	if bootloader == "u-boot" {
-		parts.Writable_nr = parts.Recovery_nr + 1 //writable is one after recovery
-	} else if bootloader == "grub" {
-		if parts.SourceDevPath == parts.TargetDevPath {
-			parts.Sysboot_nr = parts.Recovery_nr + 1
-		} else {
-			parts.Sysboot_nr = 1 //If target device is not same as source, the system-boot parition will start from 1st partition
-		}
-		if configs.Configs.Swap == true {
-			parts.Swap_nr = parts.Sysboot_nr + 1  //swap is one after system-boot
-			parts.Writable_nr = parts.Swap_nr + 1 //writable is one after swap
-		} else {
-			parts.Swap_nr = -1                       //swap is not enabled
-			parts.Writable_nr = parts.Sysboot_nr + 1 //writable is one after system-boot
-		}
-	} else {
-		return fmt.Errorf("Oops, unknown bootloader:%s", bootloader)
-	}
-
-	if partType == "gpt" {
-		rplib.Shellexec("sgdisk", dev_path, "--randomize-guids", "--move-second-header")
-	} else if partType == "mbr" {
-		//nothing to do here
-	} else {
-		return fmt.Errorf("Oops, unknown partition type:%s", partType)
-	}
-
-	// Remove partitions expect the partitions before recovery
-	if parts.SourceDevPath == parts.TargetDevPath {
-		for part_nr > parts.Recovery_nr {
-			rplib.Shellexec("parted", "-ms", dev_path, "rm", fmt.Sprintf("%v", part_nr))
-			part_nr--
-		}
-	} else {
-		// Build a new GPT to remove all partitions if target device is another disk
-		rplib.Shellexec("parted", "-ms", dev_path, "mklabel", "gpt")
-	}
-
-	// Restore system-boot
-	sysboot_path := fmtPartPath(parts.TargetDevPath, parts.Sysboot_nr)
-	if bootloader == "u-boot" {
-		// In u-boot, it keeps system-boot partition, and only mkfs
-		if parts.Sysboot_nr == -1 {
-			// oops, don't known the location of system-boot.
-			// In the u-boot, system-boot would be in fron of recovery partition
-			// If we lose system-boot, and we cannot know the proper location
-			return fmt.Errorf("Oops, We lose system-boot")
-		}
-	} else if bootloader == "grub" {
-		if partType == "gpt" {
-			rplib.Shellexec("parted", "-a", "optimal", "-ms", dev_path, "--", "mkpart", "primary", "fat32", fmt.Sprintf("%vB", parts.Sysboot_start), fmt.Sprintf("%vB", parts.Sysboot_end), "name", fmt.Sprintf("%v", parts.Sysboot_nr), SysbootLabel)
-		} else if partType == "mbr" {
-			rplib.Shellexec("parted", "-a", "optimal", "-ms", dev_path, "--", "mkpart", "primary", "fat32", fmt.Sprintf("%vB", parts.Sysboot_start), fmt.Sprintf("%vB", parts.Sysboot_end))
-		}
-	}
-	rplib.Shellexec("udevadm", "settle")
-
-	exec.Command("partprobe").Run()
-	rplib.Shellexec("sleep", "2") //wait the partition presents
-	rplib.Shellexec("mkfs.vfat", "-F", "32", "-n", SysbootLabel, sysboot_path)
-	err := os.MkdirAll(SYSBOOT_MNT_DIR, 0755)
-	if err != nil {
-		return err
-	}
-	err = syscall.Mount(sysboot_path, SYSBOOT_MNT_DIR, "vfat", 0, "")
-	if err != nil {
-		return err
-	}
-	defer syscall.Unmount(SYSBOOT_MNT_DIR, 0)
-
-	// The ubuntu classic would install grub by grub-install
-	// If the sysboot tarball file not exists, just ignore it
-	if _, err := os.Stat(SYSBOOT_TARBALL); !os.IsNotExist(err) {
-		if err := os.MkdirAll("/tmp/tmp", 0755); err != nil {
-			return err
-		}
-		rplib.Shellexec("tar", "-xpJvf", SYSBOOT_TARBALL, "-C", "/tmp/tmp")
-		rplib.Shellexec("cp", "-r", "/tmp/tmp/.", SYSBOOT_MNT_DIR)
-		rplib.Shellexec("rm", "-rf", "/tmp/tmp/")
-	}
-	rplib.Shellexec("parted", "-ms", dev_path, "set", strconv.Itoa(parts.Sysboot_nr), "boot", "on")
-
-	// Create swap partition
-	if configs.Configs.Swap == true {
-		_, new_end := rplib.GetPartitionBeginEnd(dev_path, parts.Sysboot_nr)
-		parts.Swap_start = int64(new_end + 1)
-
-		if partType == "gpt" {
-			rplib.Shellexec("parted", "-a", "optimal", "-ms", dev_path, "--", "mkpart", "primary", "linux-swap", fmt.Sprintf("%vB", parts.Swap_start), fmt.Sprintf("%vB", parts.Swap_end), "name", fmt.Sprintf("%v", parts.Swap_nr), SwapLabel)
-		} else if partType == "mbr" {
-			rplib.Shellexec("parted", "-a", "optimal", "-ms", dev_path, "--", "mkpart", "primary", "linux-swap", fmt.Sprintf("%vB", parts.Swap_start), fmt.Sprintf("%vB", parts.Swap_end))
-		}
-		rplib.Shellexec("udevadm", "settle")
-		rplib.Shellexec("mkswap", fmtPartPath(parts.TargetDevPath, parts.Swap_nr))
-	}
-
-	// Restore writable
-	var new_end int
-	if configs.Configs.Swap == true {
-		_, new_end = rplib.GetPartitionBeginEnd(dev_path, parts.Swap_nr)
-	} else {
-		_, new_end = rplib.GetPartitionBeginEnd(dev_path, parts.Sysboot_nr)
-	}
-	parts.Writable_start = int64(new_end + 1)
-	var writable_start string = fmt.Sprintf("%vB", parts.Writable_start)
-	var writable_nr string = strconv.Itoa(parts.Writable_nr)
-	writable_path := fmtPartPath(parts.TargetDevPath, parts.Writable_nr)
-
-	if partType == "gpt" {
-		rplib.Shellexec("parted", "-a", "optimal", "-ms", dev_path, "--", "mkpart", "primary", "ext4", writable_start, "-1M", "name", writable_nr, WritableLabel)
-	} else if partType == "mbr" {
-		rplib.Shellexec("parted", "-a", "optimal", "-ms", dev_path, "--", "mkpart", "primary", "ext4", writable_start, "-1M")
-	}
-
-	rplib.Shellexec("udevadm", "settle")
-	exec.Command("partprobe").Run()
-
-	rplib.Shellexec("mkfs.ext4", "-F", "-L", WritableLabel, writable_path)
-	if recoveryos == rplib.RECOVERY_OS_UBUNTU_CLASSIC_CURTIN {
-		// Curtin will handle the partition mounting and partition restore
-		err := generateCurtinConf(parts)
-		rplib.Checkerr(err)
-		err = runCurtin()
-		rplib.Checkerr(err)
-		// If the image is deployed by maas, there will be a curtin/ directory in recovery partition
-		// The nocloud-net config files are not needed, which using maas cloud-init config files
-		// Or we write a nocloud-net config for user config, hostname config ... etc
-		if _, err = os.Stat(RECO_ROOT_DIR + "curtin/"); os.IsNotExist(err) {
-			err = writeCloudInitConf(parts)
-			rplib.Checkerr(err)
-		}
-		return nil
-	} else {
-		err = os.MkdirAll(WRITABLE_MNT_DIR, 0755)
-		rplib.Checkerr(err)
-		err = syscall.Mount(writable_path, WRITABLE_MNT_DIR, "ext4", 0, "")
-		rplib.Checkerr(err)
-		defer syscall.Unmount(WRITABLE_MNT_DIR, 0)
-		// Here to support install rootfs from squashfs file
-		// If the writable tarball file not exists, just ignore it and unsquashfs the squashfs file
-		if _, err := os.Stat(WRITABLE_TARBALL); !os.IsNotExist(err) {
-			rplib.Shellexec("tar", "--xattrs", "-xJvpf", WRITABLE_TARBALL, "-C", WRITABLE_MNT_DIR)
-		} else if _, err := os.Stat(ROOTFS_SQUASHFS); !os.IsNotExist(err) {
-			rplib.Shellexec("unsquashfs", "-d", WRITABLE_MNT_DIR, "-f", ROOTFS_SQUASHFS)
-		}
 	}
 
 	return nil
